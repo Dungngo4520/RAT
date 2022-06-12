@@ -4,6 +4,7 @@
 #include <ws2tcpip.h>
 #include <string>
 #include <time.h>
+#include <regex>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma warning(disable : 4996)
@@ -14,4 +15,4 @@ using namespace std;
 
 
 void sendFile(const char* fileName, SOCKET clientSocket);
-void receiveFile(const char* fileType, SOCKET clientSocket);
+void receiveFile(int fileType, SOCKET clientSocket);

