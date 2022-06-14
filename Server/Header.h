@@ -16,3 +16,22 @@ using namespace std;
 
 void sendFile(const char* fileName, SOCKET clientSocket);
 void receiveFile(int fileType, SOCKET clientSocket);
+
+BOOL sendSignal(BOOL signal, SOCKET connectSocket);
+BOOL receiveSignal(SOCKET connectSocket);
+
+BOOL sendSignal(BOOL signal, SOCKET connectSocket) {
+	if (send(connectSocket, (char*)&signal, sizeof(signal), 0) != sizeof(BOOL)) {
+		printf("[ERROR] send signal failed. %d\n", WSAGetLastError());
+		return FALSE;
+	}
+	return TRUE;
+}
+
+BOOL receiveSignal(SOCKET connectSocket) {
+	BOOL signal = FALSE;
+	if (recv(connectSocket, (char*)&signal, sizeof(signal), 0) != sizeof(signal)) {
+		printf("[ERROR] recv. %d\n", WSAGetLastError());
+	}
+	return signal;
+}

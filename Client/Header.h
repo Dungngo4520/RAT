@@ -11,6 +11,8 @@
 #pragma comment (lib, "Winmm.lib")
 #pragma warning (disable : 4996)
 
+#define PORT "27015"
+
 using namespace std;
 
 void waitAndConnect(SOCKET* connectSocket);
@@ -22,4 +24,5 @@ void Screenshot(SOCKET connectSocket);
 void Micro(int seconds,SOCKET connectSocket);
 void Camera(SOCKET connectSocket);
 
-void sendSignal(BOOL signal, SOCKET connectSocket);
+BOOL sendSignal(BOOL signal, SOCKET connectSocket);
+BOOL receiveSignal(SOCKET connectSocket);
